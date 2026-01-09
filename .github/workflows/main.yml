@@ -10,10 +10,10 @@ jobs:
       contents: read
 
     steps:
-    - name: 💾 1. 最大化磁盘空间 (Manifest同步需要巨大空间)
+    - name: 💾 1. 最大化磁盘空间
       uses: easimon/maximize-build-space@master
       with:
-        root-reserve-mb: 4096   # 保留一些根分区
+        root-reserve-mb: 4096
         swap-size-mb: 1024
         remove-dotnet: 'true'
         remove-android: 'true'
@@ -31,7 +31,7 @@ jobs:
         chmod a+x ~/bin/repo
         echo "$HOME/bin" >> $GITHUB_PATH
         
-        # 配置 Git (Repo 必须)
+        # 配置 Git
         git config --global user.name "Manifest Builder"
         git config --global user.email "builder@localhost"
         git config --global color.ui false
@@ -41,81 +41,82 @@ jobs:
         mkdir -p workspace
         cd workspace
         
-        # 将你提供的 XML 写入本地文件
-        cat <<EOF > default.xml
-        <?xml version="10" encoding="UTF-8"?>
-        <manifest>
-          <remote fetch="https://git.codelinaro.org/clo/la" name="clo-la"/>
-          <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>
-          <remote fetch="https://github.com/OnePlusOSS" name="origin"/>
-          <project remote="origin" name="android_kernel_common_oneplus_sm8650" path="kernel_platform/common" revision="oneplus/sm8650_v_15.0.0_pad_pro">
-            <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>
-          </project>
-          <project remote="origin" name="android_kernel_oneplus_sm8650" path="kernel_platform/msm-kernel" revision="oneplus/sm8650_v_15.0.0_pad_pro">
-            <linkfile dest="kernel_platform/WORKSPACE" src="bazel.WORKSPACE"/>
-            <linkfile dest="kernel_platform/build_with_bazel.py" src="build_with_bazel.py"/>
-          </project>
-          <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm8650" path="./" revision="oneplus/sm8650_v_15.0.0_pad_pro"/>
-          <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
-            <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>
-          </project>
-          <project remote="clo-la" name="kernel_platform/build/bazel_common_rules" path="kernel_platform/build/bazel_common_rules" revision="415b543d5e1d270a22f8c6ae9d848b3560472062" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/external/bazel-skylib" path="kernel_platform/external/bazel-skylib" revision="7fdbc462f5001b7e82f026aa90bd43c494e2a8d8" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/external/dtc" path="kernel_platform/external/dtc" revision="3a8c1bbce993f9143835c7f40eeefcdf948cfaf5" upstream="refs/heads/kernel.build.lnx.1.0.r15-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/external/python/absl-py" path="kernel_platform/external/python/absl-py" revision="e46584edbb247bf79c74c4f105b6fff18234cee8" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/external/stardoc" path="kernel_platform/external/stardoc" revision="0d74fed6f8d0844f696771e71bc0b071cae99021" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/prebuilts/bazel/linux-x86_64" path="kernel_platform/prebuilts/bazel/linux-x86_64" revision="eee09422f02e60f28192bcb5a8ce8660baba6706" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/prebuilts/build-tools" path="kernel_platform/prebuilts/build-tools" revision="cad7e11de82b3307000e09c9d539b2700bd17aea" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
-            <linkfile dest="kernel_platform/build/prebuilts/build-tools" src="."/>
-          </project>
-          <project remote="clo-la" name="kernel_platform/prebuilts/clang-tools" path="kernel_platform/prebuilts/clang-tools" revision="0613fc5443d035335a9541994607bacae03750f2" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
-            <linkfile dest="kernel_platform/build/prebuilts/clang-tools" src="."/>
-          </project>
-          <project remote="clo-la" name="kernel_platform/prebuilts/jdk/jdk11" path="kernel_platform/prebuilts/jdk/jdk11" revision="ced68c9308cbc1b6ec3e602dba8d0d56df8b6d73" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/system/tools/mkbootimg" path="kernel_platform/tools/mkbootimg" revision="b17f184a20744a7e0a421f901bdf20a23be22b07" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernel_platform/toolchain/prebuilts/ndk/r23" path="kernel_platform/prebuilts/ndk-r23" revision="269a5dc9e862f78dc2030d9262f73cb2642b8127" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernelplatform/prebuilts-master/clang/host/linux-x86" path="kernel_platform/prebuilts/clang/host/linux-x86" revision="28b975ada54f8610ed531a6b57253aed10e7c87d" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
-          <project remote="clo-la" name="kernelplatform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="kernel_platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="dd099b5d68822602228e2af66693e61e7b54e0a9" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
-            <linkfile dest="kernel_platform/build/build-tools/sysroot" src="sysroot"/>
-          </project>
-        </manifest>
-        EOF
+        # 创建清单文件 (注意：这里已修复缩进问题)
+        # 使用 echo 逐行写入头部，避免 EOF 缩进错误
+        echo '<?xml version="10" encoding="UTF-8"?>' > default.xml
+        echo '<manifest>' >> default.xml
+        echo '  <remote fetch="https://git.codelinaro.org/clo/la" name="clo-la"/>' >> default.xml
+        echo '  <default remote="clo-la" revision="dummy_revision" sync-c="true" sync-tags="false"/>' >> default.xml
+        echo '  <remote fetch="https://github.com/OnePlusOSS" name="origin"/>' >> default.xml
+        
+        # 写入项目定义 (OnePlus Projects)
+        echo '  <project remote="origin" name="android_kernel_common_oneplus_sm8650" path="kernel_platform/common" revision="oneplus/sm8650_v_15.0.0_pad_pro">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/.source_date_epoch_dir" src="."/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '  <project remote="origin" name="android_kernel_oneplus_sm8650" path="kernel_platform/msm-kernel" revision="oneplus/sm8650_v_15.0.0_pad_pro">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/WORKSPACE" src="bazel.WORKSPACE"/>' >> default.xml
+        echo '    <linkfile dest="kernel_platform/build_with_bazel.py" src="build_with_bazel.py"/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '  <project remote="origin" name="android_kernel_modules_and_devicetree_oneplus_sm8650" path="./" revision="oneplus/sm8650_v_15.0.0_pad_pro"/>' >> default.xml
+        
+        # 写入依赖库 (CodeLinaro Projects)
+        echo '  <project remote="clo-la" name="kernel/prebuilts/build-tools" path="kernel_platform/prebuilts/kernel-build-tools" revision="d153b7ab4a4956198957e258d4f370e875c53059" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/build/prebuilts/kernel-build-tools" src="."/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/build/bazel_common_rules" path="kernel_platform/build/bazel_common_rules" revision="415b543d5e1d270a22f8c6ae9d848b3560472062" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/external/bazel-skylib" path="kernel_platform/external/bazel-skylib" revision="7fdbc462f5001b7e82f026aa90bd43c494e2a8d8" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/external/dtc" path="kernel_platform/external/dtc" revision="3a8c1bbce993f9143835c7f40eeefcdf948cfaf5" upstream="refs/heads/kernel.build.lnx.1.0.r15-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/external/python/absl-py" path="kernel_platform/external/python/absl-py" revision="e46584edbb247bf79c74c4f105b6fff18234cee8" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/external/stardoc" path="kernel_platform/external/stardoc" revision="0d74fed6f8d0844f696771e71bc0b071cae99021" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/prebuilts/bazel/linux-x86_64" path="kernel_platform/prebuilts/bazel/linux-x86_64" revision="eee09422f02e60f28192bcb5a8ce8660baba6706" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/prebuilts/build-tools" path="kernel_platform/prebuilts/build-tools" revision="cad7e11de82b3307000e09c9d539b2700bd17aea" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/build/prebuilts/build-tools" src="."/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/prebuilts/clang-tools" path="kernel_platform/prebuilts/clang-tools" revision="0613fc5443d035335a9541994607bacae03750f2" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/build/prebuilts/clang-tools" src="."/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/prebuilts/jdk/jdk11" path="kernel_platform/prebuilts/jdk/jdk11" revision="ced68c9308cbc1b6ec3e602dba8d0d56df8b6d73" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/system/tools/mkbootimg" path="kernel_platform/tools/mkbootimg" revision="b17f184a20744a7e0a421f901bdf20a23be22b07" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernel_platform/toolchain/prebuilts/ndk/r23" path="kernel_platform/prebuilts/ndk-r23" revision="269a5dc9e862f78dc2030d9262f73cb2642b8127" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernelplatform/prebuilts-master/clang/host/linux-x86" path="kernel_platform/prebuilts/clang/host/linux-x86" revision="28b975ada54f8610ed531a6b57253aed10e7c87d" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>' >> default.xml
+        echo '  <project remote="clo-la" name="kernelplatform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="kernel_platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="dd099b5d68822602228e2af66693e61e7b54e0a9" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">' >> default.xml
+        echo '    <linkfile dest="kernel_platform/build/build-tools/sysroot" src="sysroot"/>' >> default.xml
+        echo '  </project>' >> default.xml
+        echo '</manifest>' >> default.xml
 
-    - name: 📥 4. 通过 Manifest 还原源码 (Repo Sync)
+    - name: 📥 4. 通过 Manifest 还原源码
       run: |
         cd workspace
         
-        echo ">>> 初始化本地 Manifest 仓库..."
-        # 这里的技巧是：先初始化一个空仓库，然后强制用我们的 default.xml 覆盖
+        echo ">>> 初始化仓库..."
+        # 先初始化一个空的一加仓库作为占位
         repo init -u https://github.com/OnePlusOSS/kernel_platform -b oneplus/sm8650_v_15.0.0_pad_pro || true
         
-        echo ">>> 应用你的自定义 Manifest..."
+        echo ">>> 替换为自定义 Manifest..."
         mkdir -p .repo/manifests
-        cp default.xml .repo/manifests/default.xml
+        mv default.xml .repo/manifests/default.xml
         
-        echo ">>> 开始同步 (这将下载 XML 中定义的所有仓库)..."
-        # --force-sync 确保强制覆盖，-j 并发下载
+        echo ">>> 开始同步 (可能需要 10-15 分钟)..."
+        # 强制并发同步
         repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
 
-    - name: ⚡ 5. 注入优化补丁 (Target: msm-kernel)
+    - name: ⚡ 5. 注入优化补丁
       run: |
-        # 进入 Manifest 指定的内核源码目录
         cd workspace/kernel_platform/msm-kernel
-        
         echo ">>> 正在注入优化补丁..."
         
         apply_patch() {
             find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warn: $1"
         }
 
-        # 内存与性能 (MGLRU, ZSTD, No-Debug)
+        # 内存与性能
         apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
         apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
         apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
         apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
         apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # 网络与功耗 (RCU Lazy, BBR, CAKE)
+        # 网络与功耗
         apply_patch '$a CONFIG_RCU_LAZY=y'
         apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
         apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
@@ -126,14 +127,11 @@ jobs:
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 6. 伪造私有库 (重要！Manifest 里没有 Oplus 私有库)
+    - name: 🔧 6. 伪造私有库
       run: |
         cd workspace/kernel_platform
         
-        # 哪怕有了完美的 Manifest，Oplus 的私有库依然不在列表里 (因为不开源)
-        # 所以这个 Mock 步骤依然是必不可少的！
-        echo ">>> Mocking Oplus Private Bazel Modules..."
-        
+        echo ">>> Mocking Oplus Private Modules..."
         mkdir -p oplus/bazel
         touch oplus/bazel/BUILD
         
@@ -144,21 +142,15 @@ jobs:
         def oplus_ddk_module(**kwargs): pass
         EOF
 
-        # 如果 manifest 没有建立 vendor/oplus 链接，我们手动补一个
         mkdir -p vendor/oplus
         ln -snf ../../oplus/bazel vendor/oplus/bazel || true
 
-    - name: 🏗️ 7. 启动编译 (Build with Bazel)
+    - name: 🏗️ 7. 启动编译
       run: |
         cd workspace/kernel_platform
-        
         echo ">>> 准备编译..."
         export LTO=thin
         
-        # Manifest 自带了 build_with_bazel.py，这次我们可以直接用它！
-        # 也可以用 bazel 原生命令，双重保险
-        
-        echo ">>> 启动构建 (Target: sm8650 gki)..."
         # 使用 python 脚本 (官方推荐方式)
         python3 build_with_bazel.py -t sm8650 gki --log info || \
         # 备选方案
