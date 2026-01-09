@@ -1,0 +1,89 @@
+name: Build OnePlus Pad Pro (Pure Performance)
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: 🛠️ 1. 环境初始化
+      run: |
+        sudo apt update
+        sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd
+        git config --global user.name "OnePlus Builder"
+        git config --global user.email "bot@github.com"
+
+    - name: 📥 2. 克隆源码
+      run: |
+        mkdir -p workspace
+        cd workspace
+        echo "正在拉取源码..."
+        git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git
+        git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro msm-kernel
+        ln -snf ../msm-kernel kernel_platform/msm-kernel
+        mkdir -p kernel_platform/prebuilts/bazel/linux-x86_64
+
+    - name: ⚡ 3. 注入纯净优化补丁
+      run: |
+        cd workspace/kernel_platform/msm-kernel
+        echo ">>> 开始应用兼容性优化补丁..."
+
+        # ==================== A. 内存管理革命 (MGLRU) ====================
+        # MGLRU 是比传统 LMK 更先进的内存回收机制，显著减少杀后台和卡顿
+        # 尝试在配置中启用它 (如果内核版本支持 6.1+)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
+        
+        # zRAM 压缩算法升级为 ZSTD (比默认的 lzo/lz4 更强)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
+
+        # ==================== B. 网络低延迟套件 ====================
+        # 开启 TCP BBR (拥塞控制)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
+        # 开启 CAKE & FQ_CODEL (解决游戏时的网络排队延迟)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
+        # 开启 WireGuard (为游戏加速器提供底层支持)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_WIREGUARD=y'
+
+        # ==================== C. 功耗与性能平衡 ====================
+        # 开启 RCU Lazy (显著降低空闲/待机时的 CPU 唤醒频率，省电)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_RCU_LAZY=y'
+        
+        # 移除 SLUB Debug (减少内存分配的额外检查，提升原神/和平精英的流畅度)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
+        
+        # 移除内核调试信息 (减小内核体积，加快启动速度)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
+
+        # ==================== D. 强制关闭内核级验证 ====================
+        # 1. 移除 dirty 版本号后缀 (防止不兼容)
+        touch .scmversion && echo "" > .scmversion
+        
+        # 2. 关闭模块强制签名 (允许你以后加载任何第三方 ko 模块)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
+        
+        # 3. 尝试关闭内核侧的 AVB 标志 (配合 fastboot 命令使用效果更佳)
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ANDROID_VERITY=y/# CONFIG_ANDROID_VERITY is not set/g'
+
+        echo ">>> 优化完成，已移除所有 Root/隐藏类补丁！"
+
+    - name: 🏗️ 4. 开始编译
+      run: |
+        cd workspace/kernel_platform
+        # 优先使用 Python 脚本，失败则回退到 Bazel 原生指令
+        python3 build_with_bazel.py -t sm8650 gki --log info || \
+        ../tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+
+    - name: 📤 5. 上传成品
+      uses: actions/upload-artifact@v4
+      with:
+        name: OnePlus_Pad_Pro_Pure_Kernel
+        path: |
+          workspace/kernel_platform/out/**/dist/Image
+          workspace/kernel_platform/out/**/dist/*.ko
+          workspace/kernel_platform/out/**/dist/dtb.img
+
