@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro Optimized Kernel
+name: Build OnePlus Pad Pro Final Kernel
 
 on:
   workflow_dispatch:
@@ -10,19 +10,22 @@ jobs:
       contents: read
 
     steps:
-    - name: 🛠️ 1. 系统环境初始化
+    - name: 🛠️ 1. 环境初始化
       run: |
         sudo apt update
         sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd
+        # 移除可能导致冲突的全局配置
+        git config --global --unset-all url."https://github.com/".insteadOf || true
 
-    - name: 📥 2. 拉取 Kernel Platform (官方插件版)
+    - name: 📥 2. 拉取构建环境 (使用社区镜像)
       uses: actions/checkout@v4
       with:
-        repository: OnePlusOSS/kernel_platform
+        # 替换为兼容 sm8650 的社区平台，因为官方不提供此仓库
+        repository: Yuki-Kernel/kernel_platform
         path: workspace/kernel_platform
         fetch-depth: 1
 
-    - name: 📥 3. 拉取 msm-kernel (官方插件版)
+    - name: 📥 3. 拉取官方内核源码
       uses: actions/checkout@v4
       with:
         repository: OnePlusOSS/android_kernel_oneplus_sm8650
@@ -30,55 +33,72 @@ jobs:
         path: workspace/msm-kernel
         fetch-depth: 1
 
-    - name: 🔗 4. 建立目录链接
+    - name: 🔗 4. 建立目录链接 (拼图)
       run: |
         cd workspace
-        # 建立拼图结构，确保 kernel_platform 能找到 msm-kernel
+        echo "正在链接内核源码到构建环境..."
+        # 确保 kernel_platform 能找到 msm-kernel
         ln -snf ../msm-kernel kernel_platform/msm-kernel
+        
+        # 修复 Yuki-Kernel 镜像中可能存在的 build 链接问题
+        cd kernel_platform
+        # 如果 build 目录是死链接，重新链接
+        if [ -L "build" ] && [ ! -e "build" ]; then
+            ln -snf ../msm-kernel/build build
+        fi
 
-    - name: ⚡ 5. 注入极致优化补丁 (性能/功耗/网络)
+    - name: ⚡ 5. 注入极致优化补丁
       run: |
         cd workspace/msm-kernel
         echo ">>> 开始注入补丁..."
 
-        # 内存管理优化: MGLRU (防止杀后台/减少瞬间卡顿)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
-        
-        # 功耗优化: RCU Lazy (提升待机续航)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_RCU_LAZY=y'
-        
-        # 网络加速: BBR + CAKE (降低游戏延迟)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
-        
-        # 压缩算法: ZSTD (提升内存可用率)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
+        # 定义一个函数来安全地打补丁
+        apply_patch() {
+            find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warning: Patch failed for $1"
+        }
 
-        # 性能去臃肿: 禁用 Debug
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
+        # --- A. 内存与性能 ---
+        # MGLRU (内存管理优化)
+        apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
+        # ZSTD (zRAM 压缩)
+        apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
+        apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
+        # 禁用 Debug (提升流畅度)
+        apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
+        apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # 强制关闭 ABL 验证补丁 (内核侧)
+        # --- B. 网络与功耗 ---
+        # RCU Lazy (省电)
+        apply_patch '$a CONFIG_RCU_LAZY=y'
+        # BBR + CAKE (网络优化)
+        apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
+        apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
+        
+        # --- C. 强制去验证 ---
         touch .scmversion && echo "" > .scmversion
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
+        apply_patch 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
+        apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
+        apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
         
-        echo ">>> 补丁注入成功！"
+        echo ">>> 补丁注入完成！"
 
-    - name: 🏗️ 6. 编译内核 (Bazel)
+    - name: 🏗️ 6. 编译内核
       run: |
         cd workspace/kernel_platform
-        # 确保权限
-        chmod +x build/bazel/bin/bazel || true
-        # 启动编译
-        python3 build_with_bazel.py -t sm8650 gki --log info || ./../tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+        
+        # 确保脚本有执行权限
+        chmod +x build_with_bazel.py
+        
+        echo ">>> 启动编译..."
+        # 优先尝试 Python 脚本，如果兼容性有问题，回退到 Bazel 直接编译
+        # 注意：这里指定 -t sm8650 是基于 Yuki-Kernel 平台的通用目标
+        python3 build_with_bazel.py -t sm8650 gki --log info || \
+        ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
     - name: 📤 7. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: OnePlus_Pad_Pro_Pure_Kernel
+        name: OnePlus_Pad_Pro_Kernel_Image
         path: |
           workspace/kernel_platform/out/**/dist/Image
           workspace/kernel_platform/out/**/dist/*.ko
