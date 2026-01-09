@@ -71,4 +71,104 @@ jobs:
           <project remote="clo-la" name="kernel_platform/prebuilts/clang-tools" path="kernel_platform/prebuilts/clang-tools" revision="0613fc5443d035335a9541994607bacae03750f2" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
             <linkfile dest="kernel_platform/build/prebuilts/clang-tools" src="."/>
           </project>
-          <project remote="clo-la" name="kernel_platform/prebuilts/jdk/jdk11" path="kernel_platform/prebuilts/jdk/jdk11" revision="ced68c9308cbc1b6ec3e602dba8d0d56df8b6d73" upstream="refs/heads/ks-kernel.lnx.3.0.r
+          <project remote="clo-la" name="kernel_platform/prebuilts/jdk/jdk11" path="kernel_platform/prebuilts/jdk/jdk11" revision="ced68c9308cbc1b6ec3e602dba8d0d56df8b6d73" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
+          <project remote="clo-la" name="kernel_platform/system/tools/mkbootimg" path="kernel_platform/tools/mkbootimg" revision="b17f184a20744a7e0a421f901bdf20a23be22b07" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
+          <project remote="clo-la" name="kernel_platform/toolchain/prebuilts/ndk/r23" path="kernel_platform/prebuilts/ndk-r23" revision="269a5dc9e862f78dc2030d9262f73cb2642b8127" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
+          <project remote="clo-la" name="kernelplatform/prebuilts-master/clang/host/linux-x86" path="kernel_platform/prebuilts/clang/host/linux-x86" revision="28b975ada54f8610ed531a6b57253aed10e7c87d" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1"/>
+          <project remote="clo-la" name="kernelplatform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="kernel_platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="dd099b5d68822602228e2af66693e61e7b54e0a9" upstream="refs/heads/ks-kernel.lnx.3.0.r1-rel" clone-depth="1">
+            <linkfile dest="kernel_platform/build/build-tools/sysroot" src="sysroot"/>
+          </project>
+        </manifest>
+        EOF
+
+    - name: 📥 4. 通过 Manifest 还原源码 (Repo Sync)
+      run: |
+        cd workspace
+        
+        echo ">>> 初始化本地 Manifest 仓库..."
+        # 这里的技巧是：先初始化一个空仓库，然后强制用我们的 default.xml 覆盖
+        repo init -u https://github.com/OnePlusOSS/kernel_platform -b oneplus/sm8650_v_15.0.0_pad_pro || true
+        
+        echo ">>> 应用你的自定义 Manifest..."
+        mkdir -p .repo/manifests
+        cp default.xml .repo/manifests/default.xml
+        
+        echo ">>> 开始同步 (这将下载 XML 中定义的所有仓库)..."
+        # --force-sync 确保强制覆盖，-j 并发下载
+        repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
+
+    - name: ⚡ 5. 注入优化补丁 (Target: msm-kernel)
+      run: |
+        # 进入 Manifest 指定的内核源码目录
+        cd workspace/kernel_platform/msm-kernel
+        
+        echo ">>> 正在注入优化补丁..."
+        
+        apply_patch() {
+            find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warn: $1"
+        }
+
+        # 内存与性能 (MGLRU, ZSTD, No-Debug)
+        apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
+        apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
+        apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
+        apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
+        apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
+
+        # 网络与功耗 (RCU Lazy, BBR, CAKE)
+        apply_patch '$a CONFIG_RCU_LAZY=y'
+        apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
+        apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
+        
+        # 去验证
+        touch .scmversion && echo "" > .scmversion
+        apply_patch 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
+        apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
+        apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
+
+    - name: 🔧 6. 伪造私有库 (重要！Manifest 里没有 Oplus 私有库)
+      run: |
+        cd workspace/kernel_platform
+        
+        # 哪怕有了完美的 Manifest，Oplus 的私有库依然不在列表里 (因为不开源)
+        # 所以这个 Mock 步骤依然是必不可少的！
+        echo ">>> Mocking Oplus Private Bazel Modules..."
+        
+        mkdir -p oplus/bazel
+        touch oplus/bazel/BUILD
+        
+        cat <<EOF > oplus/bazel/oplus_modules_define.bzl
+        def define_oplus_ddk_module(**kwargs): pass
+        def define_oplus_module(**kwargs): pass
+        def oplus_module(**kwargs): pass
+        def oplus_ddk_module(**kwargs): pass
+        EOF
+
+        # 如果 manifest 没有建立 vendor/oplus 链接，我们手动补一个
+        mkdir -p vendor/oplus
+        ln -snf ../../oplus/bazel vendor/oplus/bazel || true
+
+    - name: 🏗️ 7. 启动编译 (Build with Bazel)
+      run: |
+        cd workspace/kernel_platform
+        
+        echo ">>> 准备编译..."
+        export LTO=thin
+        
+        # Manifest 自带了 build_with_bazel.py，这次我们可以直接用它！
+        # 也可以用 bazel 原生命令，双重保险
+        
+        echo ">>> 启动构建 (Target: sm8650 gki)..."
+        # 使用 python 脚本 (官方推荐方式)
+        python3 build_with_bazel.py -t sm8650 gki --log info || \
+        # 备选方案
+        ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+
+    - name: 📤 8. 上传成品
+      uses: actions/upload-artifact@v4
+      with:
+        name: OnePlus_Pad_Pro_Manifest_Kernel
+        path: |
+          workspace/kernel_platform/out/**/dist/Image
+          workspace/kernel_platform/out/**/dist/*.ko
+          workspace/kernel_platform/out/**/dist/dtb.img
