@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V2)
+name: Build OnePlus Pad Pro (Final Fix V3)
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
         git config --global user.email "bot@localhost"
         git config --global color.ui false
 
-    - name: 📥 3. 同步源码 (使用社区 Manifest)
+    - name: 📥 3. 同步源码 (Community Manifest)
       run: |
         mkdir -p workspace
         cd workspace
@@ -46,7 +46,7 @@ jobs:
         echo ">>> 开始同步源码..."
         repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
 
-    - name: ⚡ 4. 注入你的专属优化
+    - name: ⚡ 4. 注入优化补丁
       run: |
         cd workspace/kernel_platform/msm-kernel
         
@@ -76,36 +76,48 @@ jobs:
         apply_patch 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
-        
-        echo ">>> 优化注入完成！"
 
-    - name: 🔧 5. 伪造私有库 (关键修复！)
+    - name: 🔧 5. 修复 Bazel 依赖 (核心修复步骤)
       run: |
         cd workspace/kernel_platform
         
-        echo ">>> Mocking Oplus Private Libraries..."
+        echo ">>> 正在修复 Bazel 环境..."
+
+        # -------------------------------------------------------
+        # [修复 A] 伪造 //build:msm_kernel_extensions.bzl (本次报错原因)
+        # -------------------------------------------------------
+        echo "Mocking build extensions..."
+        mkdir -p build
+        # 必须确保 BUILD 文件存在
+        touch build/BUILD
+        
+        # 创建一个空的扩展文件，防止 Bazel 找不到文件
+        cat <<EOF > build/msm_kernel_extensions.bzl
+        def _empty(**kwargs):
+            pass
+        EOF
+
+        # -------------------------------------------------------
+        # [修复 B] 伪造 //oplus/bazel (防止之前的报错回归)
+        # -------------------------------------------------------
+        echo "Mocking Oplus private modules..."
         mkdir -p oplus/bazel
         touch oplus/bazel/BUILD
         
-        # 【核心修复】这里补全了所有缺少的函数定义
-        # 特别是 get_oplus_features_as_list，让它返回空列表 []
         cat <<EOF > oplus/bazel/oplus_modules_define.bzl
         def define_oplus_ddk_module(**kwargs):
             pass
-            
         def define_oplus_module(**kwargs):
             pass
-            
         def oplus_module(**kwargs):
             pass
-            
         def oplus_ddk_module(**kwargs):
             pass
-
         def get_oplus_features_as_list(**kwargs):
-            return [] 
+            return []
         EOF
 
+        # 建立 vendor 链接
         mkdir -p vendor/oplus
         ln -snf ../../oplus/bazel vendor/oplus/bazel || true
 
@@ -116,7 +128,7 @@ jobs:
         echo ">>> 准备编译..."
         export LTO=thin
         
-        # 直接使用 Bazel 编译，绕过 Python 脚本可能存在的检查
+        # 使用 Bazel 直接编译
         echo ">>> 启动构建 (Target: sm8650 gki)..."
         ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
