@@ -6,74 +6,79 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    # 授予 Actions 读取和写入仓库的权限，防止 Clone 失败
     permissions:
-      contents: write
-      actions: write
+      contents: read
 
     steps:
-    - name: 🛠️ 环境准备
+    - name: 🛠️ 1. 系统环境初始化
       run: |
         sudo apt update
         sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd
-        # 核心修复：强制 Git 使用 Token 认证，解决 128 错误
-        git config --global url."https://${{ github.token }}@github.com/".insteadOf "https://github.com/"
 
-    - name: 📥 下载源码 (修复版)
+    - name: 📥 2. 拉取 Kernel Platform (官方插件版)
+      uses: actions/checkout@v4
+      with:
+        repository: OnePlusOSS/kernel_platform
+        path: workspace/kernel_platform
+        fetch-depth: 1
+
+    - name: 📥 3. 拉取 msm-kernel (官方插件版)
+      uses: actions/checkout@v4
+      with:
+        repository: OnePlusOSS/android_kernel_oneplus_sm8650
+        ref: oneplus/sm8650_v_15.0.0_pad_pro
+        path: workspace/msm-kernel
+        fetch-depth: 1
+
+    - name: 🔗 4. 建立目录链接
       run: |
-        mkdir -p workspace && cd workspace
-        echo ">>> 正在克隆 Kernel Platform..."
-        # 加上重试机制，防止网络波动
-        git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git || (sleep 5 && git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git)
-        
-        echo ">>> 正在克隆 Kernel Source..."
-        git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro msm-kernel
-        
-        # 拼图目录结构
+        cd workspace
+        # 建立拼图结构，确保 kernel_platform 能找到 msm-kernel
         ln -snf ../msm-kernel kernel_platform/msm-kernel
 
-    - name: ⚡ 注入极致优化补丁 (性能+功耗+网络)
+    - name: ⚡ 5. 注入极致优化补丁 (性能/功耗/网络)
       run: |
-        cd workspace/kernel_platform/msm-kernel
-        echo ">>> 开始应用优化..."
+        cd workspace/msm-kernel
+        echo ">>> 开始注入补丁..."
 
-        # 1. 内存管理优化 (MGLRU) - 提升原神/和平精英加载速度，防止抖音杀后台
+        # 内存管理优化: MGLRU (防止杀后台/减少瞬间卡顿)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
         
-        # 2. 功耗优化 (RCU Lazy) - 降低待机和看抖音时的 CPU 消耗
+        # 功耗优化: RCU Lazy (提升待机续航)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_RCU_LAZY=y'
         
-        # 3. 网络扩展功能 (BBR + CAKE) - 解决三角洲等游戏高延迟/跳Ping
+        # 网络加速: BBR + CAKE (降低游戏延迟)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
         
-        # 4. zRAM 压缩优化 (ZSTD) - 增加有效内存容量
+        # 压缩算法: ZSTD (提升内存可用率)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
 
-        # 5. 性能去臃肿 (禁用 Debug) - 减少系统微卡顿
+        # 性能去臃肿: 禁用 Debug
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # 6. 强制关闭 ABL 验证补丁
+        # 强制关闭 ABL 验证补丁 (内核侧)
         touch .scmversion && echo "" > .scmversion
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
+        
+        echo ">>> 补丁注入成功！"
 
-        echo ">>> 所有补丁注入成功！"
-
-    - name: 🏗️ 编译内核 (Bazel)
+    - name: 🏗️ 6. 编译内核 (Bazel)
       run: |
         cd workspace/kernel_platform
-        # 使用原生 Bazel 路径，跳过不稳定的 Python 包装器
-        export PATH=$PATH:$(pwd)/prebuilts/bazel/linux-x86_64
+        # 确保权限
+        chmod +x build/bazel/bin/bazel || true
+        # 启动编译
         python3 build_with_bazel.py -t sm8650 gki --log info || ./../tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
-    - name: 📤 上传成品
+    - name: 📤 7. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: OnePlus_Pad_Pro_Opt_Kernel
+        name: OnePlus_Pad_Pro_Pure_Kernel
         path: |
           workspace/kernel_platform/out/**/dist/Image
           workspace/kernel_platform/out/**/dist/*.ko
