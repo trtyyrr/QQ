@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Community Manifest)
+name: Build OnePlus Pad Pro (Final Fix V2)
 
 on:
   workflow_dispatch:
@@ -41,18 +41,13 @@ jobs:
         cd workspace
         
         echo ">>> 初始化 Repo..."
-        # 核心修改点：引用 Xiaomichael 的公开清单库
-        # -b refs/heads/oneplus/sm8650: 指定骁龙8Gen3分支
-        # -m oneplus_pad_pro_v.xml: 指定一加平板Pro的配置清单
         repo init -u https://github.com/Xiaomichael/kernel_manifest.git -b refs/heads/oneplus/sm8650 -m oneplus_pad_pro_v.xml --depth=1
         
         echo ">>> 开始同步源码..."
-        # 并发同步，强制覆盖
         repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
 
-    - name: ⚡ 4. 注入你的专属优化 (保留你的需求)
+    - name: ⚡ 4. 注入你的专属优化
       run: |
-        # 进入内核源码目录 (Manifest 会把它放在 kernel_platform/msm-kernel)
         cd workspace/kernel_platform/msm-kernel
         
         echo ">>> 开始注入优化补丁..."
@@ -61,72 +56,74 @@ jobs:
             find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warn: $1"
         }
 
-        # --- A. 内存与性能 (MGLRU + ZSTD) ---
+        # --- A. 内存与性能 ---
         apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
         apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
         apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
-        # 禁用 Debug 以提升性能
         apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
         apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # --- B. 网络与功耗 (BBR + RCU Lazy) ---
+        # --- B. 网络与功耗 ---
         apply_patch '$a CONFIG_RCU_LAZY=y'
         apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
         apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
 
-        # --- C. 绕过验证 (去 Dirty + 去签名) ---
-        # 修复版本号 dirty 后缀
+        # --- C. 绕过验证 ---
         sed -i 's/ -dirty//g' scripts/setlocalversion
         sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' scripts/setlocalversion
         touch .scmversion && echo "" > .scmversion
         
-        # 关闭内核验证
         apply_patch 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
         
         echo ">>> 优化注入完成！"
 
-    - name: 🔧 5. 伪造私有库 (Bazel 安全网)
+    - name: 🔧 5. 伪造私有库 (关键修复！)
       run: |
         cd workspace/kernel_platform
         
         echo ">>> Mocking Oplus Private Libraries..."
-        # 即使使用了社区 Manifest，私有的 oplus 库依然可能缺失
-        # 我们继续使用之前的 Mock 技巧，确保万无一失
-        
         mkdir -p oplus/bazel
         touch oplus/bazel/BUILD
         
+        # 【核心修复】这里补全了所有缺少的函数定义
+        # 特别是 get_oplus_features_as_list，让它返回空列表 []
         cat <<EOF > oplus/bazel/oplus_modules_define.bzl
-        def define_oplus_ddk_module(**kwargs): pass
-        def define_oplus_module(**kwargs): pass
-        def oplus_module(**kwargs): pass
-        def oplus_ddk_module(**kwargs): pass
+        def define_oplus_ddk_module(**kwargs):
+            pass
+            
+        def define_oplus_module(**kwargs):
+            pass
+            
+        def oplus_module(**kwargs):
+            pass
+            
+        def oplus_ddk_module(**kwargs):
+            pass
+
+        def get_oplus_features_as_list(**kwargs):
+            return [] 
         EOF
 
         mkdir -p vendor/oplus
         ln -snf ../../oplus/bazel vendor/oplus/bazel || true
 
-    - name: 🏗️ 6. 启动编译 (Bazel)
+    - name: 🏗️ 6. 启动编译
       run: |
         cd workspace/kernel_platform
         
         echo ">>> 准备编译..."
         export LTO=thin
         
-        # 社区 Manifest 拉取的代码通常兼容官方 build_with_bazel.py
-        # 我们优先使用它
+        # 直接使用 Bazel 编译，绕过 Python 脚本可能存在的检查
         echo ">>> 启动构建 (Target: sm8650 gki)..."
-        
-        # 尝试编译，如果 Python 脚本失败，回退到 Bazel 原生命令
-        python3 build_with_bazel.py -t sm8650 gki --log info || \
         ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
     - name: 📤 7. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: OnePlus_Pad_Pro_Optimized_Kernel
+        name: OnePlus_Pad_Pro_Fixed_Kernel
         path: |
           workspace/kernel_platform/out/**/dist/Image
           workspace/kernel_platform/out/**/dist/*.ko
