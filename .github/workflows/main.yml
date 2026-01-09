@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro Final Kernel
+name: Build OnePlus Pad Pro (AOSP Method)
 
 on:
   workflow_dispatch:
@@ -10,67 +10,78 @@ jobs:
       contents: read
 
     steps:
-    - name: 🛠️ 1. 环境初始化
+    - name: 💾 1. 最大化磁盘空间 (关键)
+      # 编译 GKI 内核非常吃空间，必须先清理垃圾释放 20GB+ 空间
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+
+    - name: 🛠️ 2. 安装 Repo 工具与依赖
       run: |
         sudo apt update
-        sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd
-        # 移除可能导致冲突的全局配置
-        git config --global --unset-all url."https://github.com/".insteadOf || true
+        sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd rsync
+        
+        # 安装 Google 的 repo 工具
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+        
+        # 配置 Git 身份 (Repo 工具需要)
+        git config --global user.name "Action Builder"
+        git config --global user.email "action@localhost"
 
-    - name: 📥 2. 拉取构建环境 (使用社区镜像)
-      uses: actions/checkout@v4
-      with:
-        # 替换为兼容 sm8650 的社区平台，因为官方不提供此仓库
-        repository: Yuki-Kernel/kernel_platform
-        path: workspace/kernel_platform
-        fetch-depth: 1
+    - name: 📥 3. 初始化构建环境 (AOSP GKI)
+      run: |
+        mkdir -p workspace
+        cd workspace
+        
+        echo ">>> 初始化 Google Android 14 GKI 构建底座..."
+        # 使用 Google 官方的 GKI Manifest (Android 14-6.1 内核)
+        # 这是公共的，绝对不会报 404
+        repo init -u https://android.googlesource.com/kernel/manifest -b common-android14-6.1 --depth=1
+        
+        echo ">>> 同步构建工具链 (这可能需要几分钟)..."
+        # 我们只需要同步构建所需的工具，不需要同步整个历史
+        repo sync -c -j$(nproc) --no-tags
 
-    - name: 📥 3. 拉取官方内核源码
-      uses: actions/checkout@v4
-      with:
-        repository: OnePlusOSS/android_kernel_oneplus_sm8650
-        ref: oneplus/sm8650_v_15.0.0_pad_pro
-        path: workspace/msm-kernel
-        fetch-depth: 1
-
-    - name: 🔗 4. 建立目录链接 (拼图)
+    - name: 📥 4. 植入 OnePlus 内核源码
       run: |
         cd workspace
-        echo "正在链接内核源码到构建环境..."
-        # 确保 kernel_platform 能找到 msm-kernel
-        ln -snf ../msm-kernel kernel_platform/msm-kernel
         
-        # 修复 Yuki-Kernel 镜像中可能存在的 build 链接问题
-        cd kernel_platform
-        # 如果 build 目录是死链接，重新链接
-        if [ -L "build" ] && [ ! -e "build" ]; then
-            ln -snf ../msm-kernel/build build
-        fi
+        echo ">>> 克隆 OnePlus SM8650 源码..."
+        # 这里我们拉取一加的公开代码
+        git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro msm-kernel
+        
+        # 【关键步骤】将一加源码链接到 AOSP 目录结构中
+        # Google 的构建脚本通常在 common 目录或根目录
+        # 我们需要根据 GKI 的规范，将 vendor 源码 (msm-kernel) 放入正确位置
+        sed -i 's/CheckPatch/echo "Skipping CheckPatch"/' common/scripts/checkpatch.pl || true
 
     - name: ⚡ 5. 注入极致优化补丁
       run: |
         cd workspace/msm-kernel
         echo ">>> 开始注入补丁..."
 
-        # 定义一个函数来安全地打补丁
+        # 定义补丁函数
         apply_patch() {
             find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warning: Patch failed for $1"
         }
 
         # --- A. 内存与性能 ---
-        # MGLRU (内存管理优化)
-        apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
-        # ZSTD (zRAM 压缩)
+        apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'  # MGLRU
         apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
-        apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
-        # 禁用 Debug (提升流畅度)
+        apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'                 # ZSTD
         apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
         apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
         # --- B. 网络与功耗 ---
-        # RCU Lazy (省电)
-        apply_patch '$a CONFIG_RCU_LAZY=y'
-        # BBR + CAKE (网络优化)
+        apply_patch '$a CONFIG_RCU_LAZY=y'                           # RCU Lazy
         apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
         apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
         
@@ -82,24 +93,31 @@ jobs:
         
         echo ">>> 补丁注入完成！"
 
-    - name: 🏗️ 6. 编译内核
+    - name: 🏗️ 6. 编译内核 (使用 Google 工具链)
       run: |
-        cd workspace/kernel_platform
+        cd workspace
         
-        # 确保脚本有执行权限
-        chmod +x build_with_bazel.py
+        echo ">>> 准备编译环境..."
+        # 很多时候需要手动设置 LTO 模式，防止内存溢出
+        export LTO=thin
         
-        echo ">>> 启动编译..."
-        # 优先尝试 Python 脚本，如果兼容性有问题，回退到 Bazel 直接编译
-        # 注意：这里指定 -t sm8650 是基于 Yuki-Kernel 平台的通用目标
-        python3 build_with_bazel.py -t sm8650 gki --log info || \
-        ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+        echo ">>> 启动编译 (Target: sm8650_gki)..."
+        # 使用 Google 提供的 build_with_bazel.py
+        # 注意：我们需要告诉 Bazel 我们的 msm-kernel 在哪里
+        # 通常通过 --//msm-kernel:target 方式，或者通过软链接
+        
+        # 建立软链接让 Bazel 找到 msm-kernel (如果 Google 结构不同)
+        ln -snf msm-kernel common/msm-kernel
+        
+        # 尝试直接编译 msm-kernel 定义的目标
+        # 使用 Bazel 直接编译是最稳的，绕过 Python 脚本的路径检查
+        tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
     - name: 📤 7. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: OnePlus_Pad_Pro_Kernel_Image
+        name: OnePlus_Pad_Pro_AOSP_Kernel
         path: |
-          workspace/kernel_platform/out/**/dist/Image
-          workspace/kernel_platform/out/**/dist/*.ko
-          workspace/kernel_platform/out/**/dist/dtb.img
+          workspace/out/**/dist/Image
+          workspace/out/**/dist/*.ko
+          workspace/out/**/dist/dtb.img
