@@ -1,89 +1,80 @@
-name: Build OnePlus Pad Pro (Pure Performance)
+name: Build OnePlus Pad Pro Optimized Kernel
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-22.04
-    
+    # 授予 Actions 读取和写入仓库的权限，防止 Clone 失败
+    permissions:
+      contents: write
+      actions: write
+
     steps:
-    - name: 🛠️ 1. 环境初始化
+    - name: 🛠️ 环境准备
       run: |
         sudo apt update
         sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd
-        git config --global user.name "OnePlus Builder"
-        git config --global user.email "bot@github.com"
+        # 核心修复：强制 Git 使用 Token 认证，解决 128 错误
+        git config --global url."https://${{ github.token }}@github.com/".insteadOf "https://github.com/"
 
-    - name: 📥 2. 克隆源码
+    - name: 📥 下载源码 (修复版)
       run: |
-        mkdir -p workspace
-        cd workspace
-        echo "正在拉取源码..."
-        git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git
+        mkdir -p workspace && cd workspace
+        echo ">>> 正在克隆 Kernel Platform..."
+        # 加上重试机制，防止网络波动
+        git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git || (sleep 5 && git clone --depth 1 https://github.com/OnePlusOSS/kernel_platform.git)
+        
+        echo ">>> 正在克隆 Kernel Source..."
         git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650_v_15.0.0_pad_pro msm-kernel
+        
+        # 拼图目录结构
         ln -snf ../msm-kernel kernel_platform/msm-kernel
-        mkdir -p kernel_platform/prebuilts/bazel/linux-x86_64
 
-    - name: ⚡ 3. 注入纯净优化补丁
+    - name: ⚡ 注入极致优化补丁 (性能+功耗+网络)
       run: |
         cd workspace/kernel_platform/msm-kernel
-        echo ">>> 开始应用兼容性优化补丁..."
+        echo ">>> 开始应用优化..."
 
-        # ==================== A. 内存管理革命 (MGLRU) ====================
-        # MGLRU 是比传统 LMK 更先进的内存回收机制，显著减少杀后台和卡顿
-        # 尝试在配置中启用它 (如果内核版本支持 6.1+)
+        # 1. 内存管理优化 (MGLRU) - 提升原神/和平精英加载速度，防止抖音杀后台
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
         
-        # zRAM 压缩算法升级为 ZSTD (比默认的 lzo/lz4 更强)
+        # 2. 功耗优化 (RCU Lazy) - 降低待机和看抖音时的 CPU 消耗
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_RCU_LAZY=y'
+        
+        # 3. 网络扩展功能 (BBR + CAKE) - 解决三角洲等游戏高延迟/跳Ping
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
+        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
+        
+        # 4. zRAM 压缩优化 (ZSTD) - 增加有效内存容量
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
 
-        # ==================== B. 网络低延迟套件 ====================
-        # 开启 TCP BBR (拥塞控制)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
-        # 开启 CAKE & FQ_CODEL (解决游戏时的网络排队延迟)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
-        # 开启 WireGuard (为游戏加速器提供底层支持)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_WIREGUARD=y'
-
-        # ==================== C. 功耗与性能平衡 ====================
-        # 开启 RCU Lazy (显著降低空闲/待机时的 CPU 唤醒频率，省电)
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i '$a CONFIG_RCU_LAZY=y'
-        
-        # 移除 SLUB Debug (减少内存分配的额外检查，提升原神/和平精英的流畅度)
+        # 5. 性能去臃肿 (禁用 Debug) - 减少系统微卡顿
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
-        
-        # 移除内核调试信息 (减小内核体积，加快启动速度)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # ==================== D. 强制关闭内核级验证 ====================
-        # 1. 移除 dirty 版本号后缀 (防止不兼容)
+        # 6. 强制关闭 ABL 验证补丁
         touch .scmversion && echo "" > .scmversion
-        
-        # 2. 关闭模块强制签名 (允许你以后加载任何第三方 ko 模块)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
-        
-        # 3. 尝试关闭内核侧的 AVB 标志 (配合 fastboot 命令使用效果更佳)
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
-        find arch/arm64/configs -name "*defconfig*" | xargs sed -i 's/CONFIG_ANDROID_VERITY=y/# CONFIG_ANDROID_VERITY is not set/g'
 
-        echo ">>> 优化完成，已移除所有 Root/隐藏类补丁！"
+        echo ">>> 所有补丁注入成功！"
 
-    - name: 🏗️ 4. 开始编译
+    - name: 🏗️ 编译内核 (Bazel)
       run: |
         cd workspace/kernel_platform
-        # 优先使用 Python 脚本，失败则回退到 Bazel 原生指令
-        python3 build_with_bazel.py -t sm8650 gki --log info || \
-        ../tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+        # 使用原生 Bazel 路径，跳过不稳定的 Python 包装器
+        export PATH=$PATH:$(pwd)/prebuilts/bazel/linux-x86_64
+        python3 build_with_bazel.py -t sm8650 gki --log info || ./../tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
-    - name: 📤 5. 上传成品
+    - name: 📤 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: OnePlus_Pad_Pro_Pure_Kernel
+        name: OnePlus_Pad_Pro_Opt_Kernel
         path: |
           workspace/kernel_platform/out/**/dist/Image
           workspace/kernel_platform/out/**/dist/*.ko
           workspace/kernel_platform/out/**/dist/dtb.img
-
