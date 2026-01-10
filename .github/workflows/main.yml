@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V8)
+name: Build OnePlus Pad Pro (Final Fix V9)
 
 on:
   workflow_dispatch:
@@ -77,7 +77,7 @@ jobs:
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 修复 Bazel 依赖 (DTB/DTBO 全量补全)
+    - name: 🔧 5. 修复 Bazel 依赖 (补全 get_dtstree)
       run: |
         cd workspace/kernel_platform
         
@@ -86,7 +86,7 @@ jobs:
         # -------------------------------------------------------
         # [修复 A] 伪造 //build:msm_kernel_extensions.bzl
         # -------------------------------------------------------
-        echo "Mocking build extensions (V8)..."
+        echo "Mocking build extensions (V9)..."
         mkdir -p build
         touch build/BUILD
         
@@ -95,7 +95,7 @@ jobs:
         def _empty(**kwargs):
             pass
 
-        # 虚拟机相关
+        # 虚拟机与镜像定义
         def define_combined_vm_image(**kwargs):
             pass
         def define_msm_image(**kwargs):
@@ -105,23 +105,23 @@ jobs:
         def define_target_variant_modules(**kwargs):
             pass
 
-        # 配置片段
+        # 配置与模块
         def get_build_config_fragments(**kwargs):
             return []
+        def get_ksp_list(**kwargs):
+            return []
+        def get_ext_modules_list(**kwargs):
+            return []
+        def define_techpack_module(**kwargs):
+            pass
 
-        # ==========================================
-        # DTB (设备树) 相关 - 之前报错修复
-        # ==========================================
+        # DTB/DTBO 相关
         def get_dtb_list(**kwargs):
             return []
         def define_android_dtb(**kwargs):
             pass
         def pkg_dtb(**kwargs):
             pass
-
-        # ==========================================
-        # DTBO (设备树覆盖) 相关 - 本次报错修复
-        # ==========================================
         def get_dtbo_list(**kwargs):
             return []
         def define_android_dtbo(**kwargs):
@@ -129,12 +129,13 @@ jobs:
         def pkg_dtbo(**kwargs):
             pass
 
-        # 其他扩展
-        def define_techpack_module(**kwargs):
-            pass
-        def get_ksp_list(**kwargs):
-            return []
-        def get_ext_modules_list(**kwargs):
+        # 【本次修复】DTS 源码树相关
+        # get_dtstree 通常返回一个路径字符串或 None
+        def get_dtstree(**kwargs):
+            return None
+            
+        # 顺便预判一手 get_dts_list
+        def get_dts_list(**kwargs):
             return []
         EOF
 
