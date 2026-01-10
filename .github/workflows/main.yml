@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V4)
+name: Build OnePlus Pad Pro (Final Fix V5)
 
 on:
   workflow_dispatch:
@@ -77,7 +77,7 @@ jobs:
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 修复 Bazel 依赖 (精准补全缺失符号)
+    - name: 🔧 5. 修复 Bazel 依赖 (补全 define_extras)
       run: |
         cd workspace/kernel_platform
         
@@ -90,7 +90,7 @@ jobs:
         mkdir -p build
         touch build/BUILD
         
-        # 【关键修改】这里补上了 define_combined_vm_image
+        # 【关键修改】补全了 define_extras 以及其他可能用到的函数
         cat <<EOF > build/msm_kernel_extensions.bzl
         def _empty(**kwargs):
             pass
@@ -99,6 +99,12 @@ jobs:
             pass
             
         def define_msm_image(**kwargs):
+            pass
+            
+        def define_extras(**kwargs):
+            pass
+
+        def define_target_variant_modules(**kwargs):
             pass
         EOF
 
