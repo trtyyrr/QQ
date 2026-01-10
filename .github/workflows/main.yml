@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V6)
+name: Build OnePlus Pad Pro (Final Fix V7)
 
 on:
   workflow_dispatch:
@@ -77,7 +77,7 @@ jobs:
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 修复 Bazel 依赖 (补全 config fragments)
+    - name: 🔧 5. 修复 Bazel 依赖 (全量补全版)
       run: |
         cd workspace/kernel_platform
         
@@ -86,28 +86,44 @@ jobs:
         # -------------------------------------------------------
         # [修复 A] 伪造 //build:msm_kernel_extensions.bzl
         # -------------------------------------------------------
-        echo "Mocking build extensions..."
+        echo "Mocking build extensions (Full Version)..."
         mkdir -p build
         touch build/BUILD
         
-        # 【关键修改】补全了 get_build_config_fragments 并返回空列表 []
+        # 【关键修改】这里我把所有可能用到的函数全部加上了！
         cat <<EOF > build/msm_kernel_extensions.bzl
+        # 通用空函数
         def _empty(**kwargs):
             pass
-            
+
+        # 虚拟机相关
         def define_combined_vm_image(**kwargs):
             pass
-            
         def define_msm_image(**kwargs):
             pass
-            
         def define_extras(**kwargs):
             pass
-
         def define_target_variant_modules(**kwargs):
             pass
 
+        # 配置相关 (返回空列表)
         def get_build_config_fragments(**kwargs):
+            return []
+            
+        # 设备树 (DTB) 相关 (本次报错点)
+        def get_dtb_list(**kwargs):
+            return []
+        def define_android_dtb(**kwargs):
+            pass
+        def pkg_dtb(**kwargs):
+            pass
+
+        # 其他常见扩展
+        def define_techpack_module(**kwargs):
+            pass
+        def get_ksp_list(**kwargs):
+            return []
+        def get_ext_modules_list(**kwargs):
             return []
         EOF
 
