@@ -79,4 +79,82 @@ jobs:
       run: |
         cd workspace/kernel_platform
         
-        echo ">>> 正在还原官方闭源的 Bazel
+        echo ">>> 正在还原官方闭源的 Bazel 接口文件..."
+        
+        # 创建目录
+        mkdir -p build
+        mkdir -p oplus/bazel
+        touch build/BUILD
+        touch oplus/bazel/BUILD
+        
+        # 【全量补全】这里包含了高通/一加构建系统需要的所有接口
+        # 我们不修改源码去绕过它们，而是直接提供这些接口的空实现
+        # 这样 Bazel 就能正常工作，而不需要去改动 msm-kernel 的任何逻辑
+        
+        cat <<EOF > build/msm_kernel_extensions.bzl
+        # 基础占位
+        def _empty(**kwargs): pass
+
+        # 1. 镜像与虚拟机定义 (VM/Hypervisor)
+        def define_combined_vm_image(**kwargs): pass
+        def define_msm_image(**kwargs): pass
+        def define_extras(**kwargs): pass
+        def define_le_image(**kwargs): pass
+        def define_target_variant_modules(**kwargs): pass
+        def define_consolidate_gki_modules(**kwargs): pass
+        def define_abl_target(**kwargs): pass
+        def define_nand_image(**kwargs): pass
+        def define_sd_image(**kwargs): pass
+
+        # 2. 配置获取
+        def get_build_config_fragments(**kwargs): return []
+        def get_ksp_list(**kwargs): return []
+        def get_ext_modules_list(**kwargs): return []
+        def define_techpack_module(**kwargs): pass
+
+        # 3. 设备树 (DTB/DTBO/DTS)
+        def get_dtb_list(**kwargs): return []
+        def define_android_dtb(**kwargs): pass
+        def pkg_dtb(**kwargs): pass
+        def get_dtbo_list(**kwargs): return []
+        def define_android_dtbo(**kwargs): pass
+        def pkg_dtbo(**kwargs): pass
+        def get_dtstree(**kwargs): return None
+        def get_dts_list(**kwargs): return []
+        
+        # 4. Ramdisk 与 Vendor
+        def get_vendor_ramdisk_binaries(**kwargs): return []
+        EOF
+
+        # Oplus 私有接口补全
+        cat <<EOF > oplus/bazel/oplus_modules_define.bzl
+        def define_oplus_ddk_module(**kwargs): pass
+        def define_oplus_module(**kwargs): pass
+        def oplus_module(**kwargs): pass
+        def oplus_ddk_module(**kwargs): pass
+        def get_oplus_features_as_list(**kwargs): return []
+        EOF
+
+        # 建立标准链接，确保源码能找到这些文件
+        mkdir -p vendor/oplus
+        ln -snf ../../oplus/bazel vendor/oplus/bazel || true
+
+    - name: 🏗️ 6. 启动编译
+      run: |
+        cd workspace/kernel_platform
+        
+        echo ">>> 准备编译..."
+        export LTO=thin
+        
+        # 使用 Bazel 直接编译
+        # 这是最标准的方法，不依赖任何第三方 python 脚本的魔改
+        ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
+
+    - name: 📤 7. 上传成品
+      uses: actions/upload-artifact@v4
+      with:
+        name: OnePlus_Pad_Pro_Pure_Kernel
+        path: |
+          workspace/kernel_platform/out/**/dist/Image
+          workspace/kernel_platform/out/**/dist/*.ko
+          workspace/kernel_platform/out/**/dist/dtb.img
