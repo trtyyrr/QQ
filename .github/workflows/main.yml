@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V3)
+name: Build OnePlus Pad Pro (Final Fix V4)
 
 on:
   workflow_dispatch:
@@ -77,28 +77,33 @@ jobs:
         apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 修复 Bazel 依赖 (核心修复步骤)
+    - name: 🔧 5. 修复 Bazel 依赖 (精准补全缺失符号)
       run: |
         cd workspace/kernel_platform
         
         echo ">>> 正在修复 Bazel 环境..."
 
         # -------------------------------------------------------
-        # [修复 A] 伪造 //build:msm_kernel_extensions.bzl (本次报错原因)
+        # [修复 A] 伪造 //build:msm_kernel_extensions.bzl
         # -------------------------------------------------------
         echo "Mocking build extensions..."
         mkdir -p build
-        # 必须确保 BUILD 文件存在
         touch build/BUILD
         
-        # 创建一个空的扩展文件，防止 Bazel 找不到文件
+        # 【关键修改】这里补上了 define_combined_vm_image
         cat <<EOF > build/msm_kernel_extensions.bzl
         def _empty(**kwargs):
+            pass
+            
+        def define_combined_vm_image(**kwargs):
+            pass
+            
+        def define_msm_image(**kwargs):
             pass
         EOF
 
         # -------------------------------------------------------
-        # [修复 B] 伪造 //oplus/bazel (防止之前的报错回归)
+        # [修复 B] 伪造 //oplus/bazel
         # -------------------------------------------------------
         echo "Mocking Oplus private modules..."
         mkdir -p oplus/bazel
@@ -128,7 +133,7 @@ jobs:
         echo ">>> 准备编译..."
         export LTO=thin
         
-        # 使用 Bazel 直接编译
+        # 直接使用 Bazel 直接编译
         echo ">>> 启动构建 (Target: sm8650 gki)..."
         ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
