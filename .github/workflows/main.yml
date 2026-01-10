@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Pure + Optimizations)
+name: Build OnePlus Pad Pro (Final Fix V12)
 
 on:
   workflow_dispatch:
@@ -32,22 +32,21 @@ jobs:
         git config --global user.name "Builder"
         git config --global user.email "bot@localhost"
 
-    - name: 📥 3. 拉取源码 (使用社区 Manifest)
+    - name: 📥 3. 拉取源码 (Community Manifest)
       run: |
         mkdir -p workspace
         cd workspace
         
-        # 使用社区维护的 Manifest，它指向了一加官方的源码
+        # 使用社区维护的 Manifest
         repo init -u https://github.com/Xiaomichael/kernel_manifest.git -b refs/heads/oneplus/sm8650 -m oneplus_pad_pro_v.xml --depth=1
         repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
 
-    - name: ⚡ 4. 应用优化补丁 (只做你要求的)
+    - name: ⚡ 4. 应用优化补丁
       run: |
         cd workspace/kernel_platform/msm-kernel
         
         echo ">>> 正在应用性能与网络优化..."
         
-        # 定义一个简单的打补丁函数
         add_config() {
             find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1"
         }
@@ -57,16 +56,16 @@ jobs:
         add_config 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
         add_config '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
         
-        # 2. 性能优化 (去除 Debug)
+        # 2. 性能优化
         add_config 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
         add_config 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # 3. 网络与功耗 (BBR + RCU Lazy)
+        # 3. 网络与功耗
         add_config '$a CONFIG_RCU_LAZY=y'
         add_config '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
         add_config '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
 
-        # 4. 去除验证 (保留原始版本号，去掉 dirty，去掉签名强制)
+        # 4. 去除验证
         sed -i 's/ -dirty//g' scripts/setlocalversion
         sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' scripts/setlocalversion
         touch .scmversion && echo "" > .scmversion
@@ -75,27 +74,22 @@ jobs:
         add_config 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
         add_config 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 还原缺失的官方接口文件 (不做魔改，只做补全)
+    - name: 🔧 5. 还原缺失的官方接口文件 (V12 全补全)
       run: |
         cd workspace/kernel_platform
         
         echo ">>> 正在还原官方闭源的 Bazel 接口文件..."
         
-        # 创建目录
         mkdir -p build
         mkdir -p oplus/bazel
         touch build/BUILD
         touch oplus/bazel/BUILD
         
-        # 【全量补全】这里包含了高通/一加构建系统需要的所有接口
-        # 我们不修改源码去绕过它们，而是直接提供这些接口的空实现
-        # 这样 Bazel 就能正常工作，而不需要去改动 msm-kernel 的任何逻辑
-        
+        # 写入所有已知的高通/一加扩展函数
         cat <<EOF > build/msm_kernel_extensions.bzl
-        # 基础占位
         def _empty(**kwargs): pass
 
-        # 1. 镜像与虚拟机定义 (VM/Hypervisor)
+        # 镜像与虚拟机
         def define_combined_vm_image(**kwargs): pass
         def define_msm_image(**kwargs): pass
         def define_extras(**kwargs): pass
@@ -105,14 +99,15 @@ jobs:
         def define_abl_target(**kwargs): pass
         def define_nand_image(**kwargs): pass
         def define_sd_image(**kwargs): pass
+        def define_board_kernel(**kwargs): pass
 
-        # 2. 配置获取
+        # 配置与列表
         def get_build_config_fragments(**kwargs): return []
         def get_ksp_list(**kwargs): return []
         def get_ext_modules_list(**kwargs): return []
         def define_techpack_module(**kwargs): pass
 
-        # 3. 设备树 (DTB/DTBO/DTS)
+        # DTB/DTBO/DTS
         def get_dtb_list(**kwargs): return []
         def define_android_dtb(**kwargs): pass
         def pkg_dtb(**kwargs): pass
@@ -122,11 +117,12 @@ jobs:
         def get_dtstree(**kwargs): return None
         def get_dts_list(**kwargs): return []
         
-        # 4. Ramdisk 与 Vendor
+        # Ramdisk (本次修复重点)
         def get_vendor_ramdisk_binaries(**kwargs): return []
+        def get_gki_ramdisk_prebuilt_binary(**kwargs): return None
         EOF
 
-        # Oplus 私有接口补全
+        # Oplus 私有接口
         cat <<EOF > oplus/bazel/oplus_modules_define.bzl
         def define_oplus_ddk_module(**kwargs): pass
         def define_oplus_module(**kwargs): pass
@@ -135,7 +131,7 @@ jobs:
         def get_oplus_features_as_list(**kwargs): return []
         EOF
 
-        # 建立标准链接，确保源码能找到这些文件
+        # 建立链接
         mkdir -p vendor/oplus
         ln -snf ../../oplus/bazel vendor/oplus/bazel || true
 
@@ -147,7 +143,6 @@ jobs:
         export LTO=thin
         
         # 使用 Bazel 直接编译
-        # 这是最标准的方法，不依赖任何第三方 python 脚本的魔改
         ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
 
     - name: 📤 7. 上传成品
