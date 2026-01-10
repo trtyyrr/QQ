@@ -1,4 +1,4 @@
-name: Build OnePlus Pad Pro (Final Fix V10)
+name: Build OnePlus Pad Pro (Pure + Optimizations)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
       contents: read
 
     steps:
-    - name: 💾 1. 最大化磁盘空间
+    - name: 💾 1. 准备磁盘空间
       uses: easimon/maximize-build-space@master
       with:
         root-reserve-mb: 8192
@@ -19,7 +19,7 @@ jobs:
         remove-android: 'true'
         remove-codeql: 'true'
 
-    - name: 🛠️ 2. 安装构建环境
+    - name: 🛠️ 2. 安装基础工具
       run: |
         sudo apt update
         sudo apt install -y git curl wget build-essential bc bison flex libssl-dev python3 python3-pip android-sdk-libsparse-utils lz4 zstd rsync
@@ -29,161 +29,54 @@ jobs:
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         echo "$HOME/bin" >> $GITHUB_PATH
-        
-        # 配置 Git
         git config --global user.name "Builder"
         git config --global user.email "bot@localhost"
-        git config --global color.ui false
 
-    - name: 📥 3. 同步源码 (Community Manifest)
+    - name: 📥 3. 拉取源码 (使用社区 Manifest)
       run: |
         mkdir -p workspace
         cd workspace
         
-        echo ">>> 初始化 Repo..."
+        # 使用社区维护的 Manifest，它指向了一加官方的源码
         repo init -u https://github.com/Xiaomichael/kernel_manifest.git -b refs/heads/oneplus/sm8650 -m oneplus_pad_pro_v.xml --depth=1
-        
-        echo ">>> 开始同步源码..."
         repo sync -c -j$(nproc) --force-sync --no-tags --no-clone-bundle
 
-    - name: ⚡ 4. 注入优化补丁
+    - name: ⚡ 4. 应用优化补丁 (只做你要求的)
       run: |
         cd workspace/kernel_platform/msm-kernel
         
-        echo ">>> 开始注入优化补丁..."
+        echo ">>> 正在应用性能与网络优化..."
         
-        apply_patch() {
-            find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1" || echo "Warn: $1"
+        # 定义一个简单的打补丁函数
+        add_config() {
+            find arch/arm64/configs -name "*defconfig*" | xargs sed -i "$1"
         }
 
-        # --- A. 内存与性能 ---
-        apply_patch '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
-        apply_patch 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
-        apply_patch '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
-        apply_patch 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
-        apply_patch 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
+        # 1. 内存优化 (MGLRU + ZSTD)
+        add_config '$a CONFIG_LRU_GEN=y\nCONFIG_LRU_GEN_ENABLED=y'
+        add_config 's/CONFIG_ZRAM_DEF_COMP_LZ4=y/# CONFIG_ZRAM_DEF_COMP_LZ4 is not set/g'
+        add_config '$a CONFIG_ZRAM_DEF_COMP_ZSTD=y'
+        
+        # 2. 性能优化 (去除 Debug)
+        add_config 's/CONFIG_SLUB_DEBUG=y/# CONFIG_SLUB_DEBUG is not set/g'
+        add_config 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g'
 
-        # --- B. 网络与功耗 ---
-        apply_patch '$a CONFIG_RCU_LAZY=y'
-        apply_patch '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
-        apply_patch '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
+        # 3. 网络与功耗 (BBR + RCU Lazy)
+        add_config '$a CONFIG_RCU_LAZY=y'
+        add_config '$a CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"'
+        add_config '$a CONFIG_NET_SCH_CAKE=y\nCONFIG_NET_SCH_FQ_CODEL=y'
 
-        # --- C. 绕过验证 ---
+        # 4. 去除验证 (保留原始版本号，去掉 dirty，去掉签名强制)
         sed -i 's/ -dirty//g' scripts/setlocalversion
         sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' scripts/setlocalversion
         touch .scmversion && echo "" > .scmversion
         
-        apply_patch 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
-        apply_patch 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
-        apply_patch 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
+        add_config 's/CONFIG_MODULE_SIG_FORCE=y/# CONFIG_MODULE_SIG_FORCE is not set/g'
+        add_config 's/CONFIG_DM_VERITY=y/# CONFIG_DM_VERITY is not set/g'
+        add_config 's/CONFIG_DM_VERITY_AVB=y/# CONFIG_DM_VERITY_AVB is not set/g'
 
-    - name: 🔧 5. 修复 Bazel 依赖 (补全 Ramdisk 相关)
+    - name: 🔧 5. 还原缺失的官方接口文件 (不做魔改，只做补全)
       run: |
         cd workspace/kernel_platform
         
-        echo ">>> 正在修复 Bazel 环境..."
-
-        # -------------------------------------------------------
-        # [修复 A] 伪造 //build:msm_kernel_extensions.bzl
-        # -------------------------------------------------------
-        echo "Mocking build extensions (V10)..."
-        mkdir -p build
-        touch build/BUILD
-        
-        cat <<EOF > build/msm_kernel_extensions.bzl
-        # 通用
-        def _empty(**kwargs):
-            pass
-
-        # 虚拟机/镜像
-        def define_combined_vm_image(**kwargs):
-            pass
-        def define_msm_image(**kwargs):
-            pass
-        def define_extras(**kwargs):
-            pass
-        def define_target_variant_modules(**kwargs):
-            pass
-
-        # 配置/列表
-        def get_build_config_fragments(**kwargs):
-            return []
-        def get_ksp_list(**kwargs):
-            return []
-        def get_ext_modules_list(**kwargs):
-            return []
-        def define_techpack_module(**kwargs):
-            pass
-
-        # DTB/DTBO
-        def get_dtb_list(**kwargs):
-            return []
-        def define_android_dtb(**kwargs):
-            pass
-        def pkg_dtb(**kwargs):
-            pass
-        def get_dtbo_list(**kwargs):
-            return []
-        def define_android_dtbo(**kwargs):
-            pass
-        def pkg_dtbo(**kwargs):
-            pass
-        def get_dtstree(**kwargs):
-            return None
-        def get_dts_list(**kwargs):
-            return []
-
-        # 【本次修复】Ramdisk 与 LE 相关
-        def get_vendor_ramdisk_binaries(**kwargs):
-            return []
-            
-        def define_le_image(**kwargs):
-            pass
-            
-        def define_consolidate_gki_modules(**kwargs):
-            pass
-        EOF
-
-        # -------------------------------------------------------
-        # [修复 B] 伪造 //oplus/bazel
-        # -------------------------------------------------------
-        echo "Mocking Oplus private modules..."
-        mkdir -p oplus/bazel
-        touch oplus/bazel/BUILD
-        
-        cat <<EOF > oplus/bazel/oplus_modules_define.bzl
-        def define_oplus_ddk_module(**kwargs):
-            pass
-        def define_oplus_module(**kwargs):
-            pass
-        def oplus_module(**kwargs):
-            pass
-        def oplus_ddk_module(**kwargs):
-            pass
-        def get_oplus_features_as_list(**kwargs):
-            return []
-        EOF
-
-        # 建立 vendor 链接
-        mkdir -p vendor/oplus
-        ln -snf ../../oplus/bazel vendor/oplus/bazel || true
-
-    - name: 🏗️ 6. 启动编译
-      run: |
-        cd workspace/kernel_platform
-        
-        echo ">>> 准备编译..."
-        export LTO=thin
-        
-        # 直接使用 Bazel 直接编译
-        echo ">>> 启动构建 (Target: sm8650 gki)..."
-        ./tools/bazel build //msm-kernel:sm8650_gki --jobs=$(nproc)
-
-    - name: 📤 7. 上传成品
-      uses: actions/upload-artifact@v4
-      with:
-        name: OnePlus_Pad_Pro_Fixed_Kernel
-        path: |
-          workspace/kernel_platform/out/**/dist/Image
-          workspace/kernel_platform/out/**/dist/*.ko
-          workspace/kernel_platform/out/**/dist/dtb.img
+        echo ">>> 正在还原官方闭源的 Bazel
